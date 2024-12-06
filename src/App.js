@@ -22,96 +22,111 @@ function App() {
   const isValidMobileNumber = (number) => /^\d{10}$/.test(number);
 
   // Initialize WebSocket connection
-  const registerWebSocket = () => {
+  const registerWebSocket = async() => {
     if (!isValidMobileNumber(myMobileNumber)) {
       alert('Please enter a valid 10-digit mobile number');
       return;
     }
 
-    wsRef.current = new WebSocket(`ws://localhost:8080/chat/${myMobileNumber}`);
-
-    wsRef.current.onopen = () => {
-      setIsRegistered(true);
-      console.log('WebSocket Connected');
-      fetchContacts();  // Fetch contacts once WebSocket is connected
-    };
-
-    wsRef.current.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-    
-      if (data.messageType === 'ACK' || data.messageType === 'ERR') {
-        const messageId = data.messageId;
-        setConversations((prev) => ({
-          ...prev,
-          [data.to]: prev[data.to].map((conversationMessage) => {
-            if (conversationMessage.messageId === messageId) {
-              return {
-                ...conversationMessage,
-                type: data.messageType === 'ACK' ? 'sent' : 'failed'
-              };
-            }
-            return conversationMessage;
-          })
-        }));
+    const response = await fetch('http://localhost:8082/discovery/geturl', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'text/plain',
       }
-      else if (data.from) {
-        // Check if the sender is in the contacts list
-        const sender = data.from;
-        const senderExists = contactsRef.current.some(contact => contact.contactMobileNo === sender);
-        if (!senderExists) {
-          // If sender is not in the contact list, add them to the contact list
-          try {
-            // Call the backend to add the new contact
-            const response = await fetch('http://localhost:8080/chat/addContact', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ mobileNo: myMobileNumber, contactMobileNo: sender, conversationKey: data.conversationKey }),
-            });
-    
-            if (!response.ok) {
-              alert('Failed to add contact')
-              throw new Error('Failed to add contact');
-            }
-    
-            // If the contact is added successfully, update the contacts list
-            const addedContact = await response.json();
-            setContacts((prevContacts) => [...prevContacts, addedContact]);
-    
-            console.log(`Added new contact: ${sender}`);
-          } catch (error) {
-            console.error('Error adding contact:', error);
-          }
+    });
+
+    if (!response.ok) {
+      alert('Unable to get chat server')
+      throw new Error('Unable to get chat server');
+    }
+    else{
+      const responseData = await response.text();
+      console.log(responseData);
+      wsRef.current = new WebSocket(`ws://${responseData}/chat/${myMobileNumber}`);
+
+      wsRef.current.onopen = () => {
+        setIsRegistered(true);
+        console.log('WebSocket Connected');
+        fetchContacts();  // Fetch contacts once WebSocket is connected
+      };
+
+      wsRef.current.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
+      
+        if (data.messageType === 'ACK' || data.messageType === 'ERR') {
+          const messageId = data.messageId;
+          setConversations((prev) => ({
+            ...prev,
+            [data.to]: prev[data.to].map((conversationMessage) => {
+              if (conversationMessage.messageId === messageId) {
+                return {
+                  ...conversationMessage,
+                  type: data.messageType === 'ACK' ? 'sent' : 'failed'
+                };
+              }
+              return conversationMessage;
+            })
+          }));
         }
-    
-        // Add the new message to the conversation list
-        const messageType = sender === myMobileNumber ? 'sent' : 'received';
-    
-        setConversations(prev => ({
-          ...prev,
-          [sender]: [
-            ...(prev[sender] || []),
-            { sender: data.from, message: data.message, type: messageType, messageId: data.messageId }
-          ]
-        }));
-      }
-    };
+        else if (data.from) {
+          // Check if the sender is in the contacts list
+          const sender = data.from;
+          const senderExists = contactsRef.current.some(contact => contact.contactMobileNo === sender);
+          if (!senderExists) {
+            // If sender is not in the contact list, add them to the contact list
+            try {
+              // Call the backend to add the new contact
+              const response = await fetch('http://localhost:8081/chat/addContact', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ mobileNo: myMobileNumber, contactMobileNo: sender, conversationKey: data.conversationKey }),
+              });
+      
+              if (!response.ok) {
+                alert('Failed to add contact')
+                throw new Error('Failed to add contact');
+              }
+      
+              // If the contact is added successfully, update the contacts list
+              const addedContact = await response.json();
+              setContacts((prevContacts) => [...prevContacts, addedContact]);
+      
+              console.log(`Added new contact: ${sender}`);
+            } catch (error) {
+              console.error('Error adding contact:', error);
+            }
+          }
+      
+          // Add the new message to the conversation list
+          const messageType = sender === myMobileNumber ? 'sent' : 'received';
+      
+          setConversations(prev => ({
+            ...prev,
+            [sender]: [
+              ...(prev[sender] || []),
+              { sender: data.from, message: data.message, type: messageType, messageId: data.messageId }
+            ]
+          }));
+        }
+      };
 
-    wsRef.current.onerror = (error) => {
-      console.error('WebSocket Error:', error);
-    };
+      wsRef.current.onerror = (error) => {
+        console.error('WebSocket Error:', error);
+      };
 
-    wsRef.current.onclose = () => {
-      console.log('WebSocket Disconnected');
-      setIsRegistered(false);
-    };
+      wsRef.current.onclose = () => {
+        console.log('WebSocket Disconnected');
+        setIsRegistered(false);
+      };
+    }
   };
 
   // Fetch contacts list from API
   const fetchContacts = async () => {
     try {
-      const response = await fetch('http://localhost:8080/chat/getContact?mobileNo=' + myMobileNumber, {
+      const response = await fetch('http://localhost:8081/chat/getContact?mobileNo=' + myMobileNumber, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -131,7 +146,7 @@ function App() {
 
   const fetchMessages = async (contact) => {
     try {
-      const response = await fetch(`http://localhost:8080/chat/getMessages?conversationKey=${contact.conversationKey}`, {
+      const response = await fetch(`http://localhost:8081/chat/getMessages?conversationKey=${contact.conversationKey}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -177,7 +192,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('http://localhost:8080/chat/addContact', {
+      const response = await fetch('http://localhost:8081/chat/addContact', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
